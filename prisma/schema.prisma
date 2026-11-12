@@ -1,0 +1,628 @@
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// 1. Roles
+model Role {
+  id          String   @id @default(cuid())
+  name        String   @unique // OWNER, PM, MEMBER, STAKEHOLDER, ADMIN
+  label       String
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  users       User[]
+
+  @@map("roles")
+}
+
+// 2. Users
+model User {
+  id             String    @id @default(cuid())
+  name           String
+  email          String    @unique
+  password       String
+  roleId         String
+  role           Role      @relation(fields: [roleId], references: [id])
+  division       String?   // Steering Committee, PM, Analisis & Desain, Pengembangan, Penjaminan Mutu, Infrastruktur, Dokumentasi & Pelatihan
+  avatar         String?
+  phone          String?
+  isActive       Boolean   @default(true)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  projectMembers   ProjectMember[]
+  managedProjects  Project[]        @relation("ProjectManager")
+  ownedProjects    Project[]        @relation("ProjectOwner")
+  assignedTasks    Task[]           @relation("TaskAssignee")
+  createdTasks     Task[]           @relation("TaskCreator")
+  taskComments     TaskComment[]
+  gateApprovals    GateApproval[]
+  riskOwner        Risk[]           @relation("RiskOwner")
+  changeRequests   ChangeRequest[]  @relation("CRRequester")
+  documents        Document[]
+  meetingParticipants MeetingParticipant[]
+  notifications    Notification[]
+  auditLogs        AuditLog[]
+  methodologyAssessments MethodologyAssessment[]
+
+  @@map("users")
+}
+
+// 3. Projects
+model Project {
+  id          String    @id @default(cuid())
+  projectCode String    @unique // e.g. PRJ-2026-001
+  name        String
+  description String?
+  ownerId     String
+  owner       User      @relation("ProjectOwner", fields: [ownerId], references: [id])
+  managerId   String
+  manager     User      @relation("ProjectManager", fields: [managerId], references: [id])
+  startDate   DateTime
+  targetDate  DateTime
+  endDate     DateTime?
+  budget      Float     @default(0)
+  status      String    @default("Planning") // Planning, Active, On Hold, Completed, Cancelled
+  progress    Float     @default(0) // 0 - 100
+  methodology String    @default("Hybrid") // Waterfall, Kanban, Hybrid
+  priority    String    @default("Medium") // Low, Medium, High
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  members            ProjectMember[]
+  phases             ProjectPhase[]
+  gates              ProjectGate[]
+  charter            ProjectCharter?
+  scope              ProjectScope?
+  tasks              Task[]
+  wbsItems           WbsItem[]
+  milestones         Milestone[]
+  risks              Risk[]
+  documents          Document[]
+  meetings           Meeting[]
+  communicationLogs  CommunicationLog[]
+  changeRequests     ChangeRequest[]
+  budgetPlan         Budget?
+  auditLogs          AuditLog[]
+  methodologyAssessments MethodologyAssessment[]
+
+  @@map("projects")
+}
+
+// 4. Project Members
+model ProjectMember {
+  id         String   @id @default(cuid())
+  projectId  String
+  project    Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  roleInProject String // Project Manager, Tech Lead, Analyst, Developer, QA, etc.
+  division   String?
+  joinedAt   DateTime @default(now())
+
+  @@unique([projectId, userId])
+  @@map("project_members")
+}
+
+// 5. Project Phases (Waterfall 7 Phases)
+model ProjectPhase {
+  id          String    @id @default(cuid())
+  projectId   String
+  project     Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  phaseNumber Int       // 1 to 7
+  name        String    // Inisiasi dan Perencanaan, Analisis Kebutuhan, etc.
+  description String?
+  startDate   DateTime
+  targetDate  DateTime
+  actualEndDate DateTime?
+  status      String    @default("Not Started") // Not Started, In Progress, Completed, Delayed
+  progress    Float     @default(0)
+  evalNotes   String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  gates       ProjectGate[]
+  tasks       Task[]
+  wbsItems    WbsItem[]
+
+  @@map("project_phases")
+}
+
+// 6. Project Gates
+model ProjectGate {
+  id          String   @id @default(cuid())
+  projectId   String
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  phaseId     String
+  phase       ProjectPhase @relation(fields: [phaseId], references: [id], onDelete: Cascade)
+  gateNumber  Int      // 1 to 7
+  name        String   // Gate 1: Scope & Plan Approval, Gate 2: SRS Signed, etc.
+  criteria    String   // JSON or text list of requirements
+  status      String   @default("Not Submitted") // Not Submitted, Pending Approval, Approved, Rejected, Revision Required
+  submittedAt DateTime?
+  decisionAt  DateTime?
+  decisionNotes String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  approvals   GateApproval[]
+
+  @@map("project_gates")
+}
+
+// 7. Gate Approvals (Digital signature & audit record)
+model GateApproval {
+  id          String   @id @default(cuid())
+  gateId      String
+  gate        ProjectGate @relation(fields: [gateId], references: [id], onDelete: Cascade)
+  approverId  String
+  approver    User     @relation(fields: [approverId], references: [id])
+  status      String   // Approved, Rejected, Revision Required
+  comments    String?
+  signatureToken String? // Digital verification stamp (hash of user+timestamp+decision)
+  decidedAt   DateTime @default(now())
+
+  @@map("gate_approvals")
+}
+
+// 8. Project Charters
+model ProjectCharter {
+  id          String   @id @default(cuid())
+  projectId   String   @unique
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  background  String
+  objectives  String
+  businessCase String?
+  scopeSummary String
+  keyStakeholders String?
+  successCriteria String
+  approvedBy  String?
+  approvedAt  DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("project_charters")
+}
+
+// 9. Project Scopes
+model ProjectScope {
+  id          String   @id @default(cuid())
+  projectId   String   @unique
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  inScope     String   // Deliverables & functional scopes included
+  outOfScope  String   // Explicitly excluded items
+  assumptions String?
+  constraints String?
+  acceptanceCriteria String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("project_scopes")
+}
+
+// 10. Tasks (Kanban cards)
+model Task {
+  id          String    @id @default(cuid())
+  taskCode    String    // e.g. TSK-001
+  projectId   String
+  project     Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  phaseId     String?
+  phase       ProjectPhase? @relation(fields: [phaseId], references: [id])
+  wbsItemId   String?
+  wbsItem     WbsItem?  @relation(fields: [wbsItemId], references: [id])
+  title       String
+  description String?
+  status      String    @default("Backlog") // Backlog, Analisis, Develop, Review, Test, Done
+  priority    String    @default("Medium")  // Low, Medium, High
+  labels      String?   // comma-separated tags or JSON
+  assigneeId  String?
+  assignee    User?     @relation("TaskAssignee", fields: [assigneeId], references: [id])
+  creatorId   String
+  creator     User      @relation("TaskCreator", fields: [creatorId], references: [id])
+  
+  estimateDays Float?   @default(1)
+  startDate   DateTime?
+  dueDate     DateTime?
+  completedAt DateTime?
+
+  // Quality gate flags for Done
+  isReviewed  Boolean   @default(false)
+  isTested    Boolean   @default(false)
+  isDemoed    Boolean   @default(false)
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  comments    TaskComment[]
+  attachments TaskAttachment[]
+  histories   TaskStatusHistory[]
+
+  @@map("tasks")
+}
+
+// 11. Task Comments
+model TaskComment {
+  id        String   @id @default(cuid())
+  taskId    String
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  comment   String
+  createdAt DateTime @default(now())
+
+  @@map("task_comments")
+}
+
+// 12. Task Attachments
+model TaskAttachment {
+  id        String   @id @default(cuid())
+  taskId    String
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  fileName  String
+  fileUrl   String
+  fileSize  Int
+  fileType  String
+  uploadedAt DateTime @default(now())
+
+  @@map("task_attachments")
+}
+
+// 13. Task Status Histories (for Cycle Time & Lead Time analytics)
+model TaskStatusHistory {
+  id        String   @id @default(cuid())
+  taskId    String
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  fromStatus String?
+  toStatus  String
+  changedBy String?
+  changedAt DateTime @default(now())
+
+  @@map("task_status_histories")
+}
+
+// 14. WBS Items
+model WbsItem {
+  id          String   @id @default(cuid())
+  projectId   String
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  phaseId     String?
+  phase       ProjectPhase? @relation(fields: [phaseId], references: [id])
+  parentId    String?
+  wbsCode     String   // e.g. 1.0, 1.1, 1.1.1
+  title       String
+  description String?
+  startDate   DateTime
+  endDate     DateTime
+  progress    Float    @default(0)
+  status      String   @default("Not Started") // Not Started, In Progress, Completed
+  assignedTo  String?
+  raciR       String?  // Responsible user IDs or names
+  raciA       String?  // Accountable
+  raciC       String?  // Consulted
+  raciI       String?  // Informed
+  dependencies String? // predecessor WbsCodes
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tasks       Task[]
+
+  @@map("wbs_items")
+}
+
+// 15. Milestones
+model Milestone {
+  id          String   @id @default(cuid())
+  projectId   String
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  code        String   // M1, M2, etc.
+  title       String
+  description String?
+  targetDate  DateTime
+  isReached   Boolean  @default(false)
+  reachedDate DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("milestones")
+}
+
+// 16. Risks (Risk Register)
+model Risk {
+  id          String   @id @default(cuid())
+  riskCode    String   // e.g. RSK-001
+  projectId   String
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  title       String
+  description String?
+  category    String   // Teknis, Manajemen, Sumber Daya, Eksternal
+  probability Int      // 1 to 5
+  impact      Int      // 1 to 5
+  riskScore   Int      // probability * impact (1 - 25)
+  severity    String   // Low, Medium, High, Critical
+  mitigationPlan String?
+  ownerId     String?
+  owner       User?    @relation("RiskOwner", fields: [ownerId], references: [id])
+  status      String   @default("Identified") // Identified, Mitigating, Closed, Accepted
+  identifiedDate DateTime @default(now())
+  reviewDate  DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  mitigations RiskMitigation[]
+
+  @@map("risks")
+}
+
+// 17. Risk Mitigations
+model RiskMitigation {
+  id          String   @id @default(cuid())
+  riskId      String
+  risk        Risk     @relation(fields: [riskId], references: [id], onDelete: Cascade)
+  action      String
+  actionOwner String?
+  dueDate     DateTime?
+  status      String   @default("Planned") // Planned, In Progress, Completed
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("risk_mitigations")
+}
+
+// 18. Documents
+model Document {
+  id          String   @id @default(cuid())
+  projectId   String
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  title       String
+  category    String   // Project Charter, Scope Document, Project Plan, SRS, System Design, ERD, UI/UX Prototype, Testing Report, UAT Document, User Manual, BAST, Other
+  currentVersion String @default("1.0")
+  status      String   @default("Draft") // Draft, Review, Approved, Superseded
+  uploadedById String
+  uploadedBy  User     @relation(fields: [uploadedById], references: [id])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  versions    DocumentVersion[]
+
+  @@map("documents")
+}
+
+// 19. Document Versions
+model DocumentVersion {
+  id          String   @id @default(cuid())
+  documentId  String
+  document    Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  versionNumber String // 1.0, 1.1, etc.
+  fileUrl     String
+  fileName    String
+  fileSize    Int
+  notes       String?
+  uploadedAt  DateTime @default(now())
+
+  @@map("document_versions")
+}
+
+// 20. Notifications
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String
+  message   String
+  type      String   @default("info") // info, warning, success, danger
+  link      String?
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@map("notifications")
+}
+
+// 21. Meetings
+model Meeting {
+  id          String   @id @default(cuid())
+  projectId   String
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  title       String
+  meetingType String   // Daily Stand-up, Demo Mingguan, Laporan Kemajuan, Rapat Gate, Other
+  scheduledAt DateTime
+  durationMin Int      @default(30)
+  location    String?  // Online Link or Room
+  agenda      String?
+  mom         String?  // Minutes of Meeting
+  status      String   @default("Scheduled") // Scheduled, Completed, Cancelled
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  participants MeetingParticipant[]
+
+  @@map("meetings")
+}
+
+// 22. Meeting Participants
+model MeetingParticipant {
+  id         String   @id @default(cuid())
+  meetingId  String
+  meeting    Meeting  @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  attended   Boolean  @default(false)
+
+  @@unique([meetingId, userId])
+  @@map("meeting_participants")
+}
+
+// 23. Communication Logs
+model CommunicationLog {
+  id          String   @id @default(cuid())
+  projectId   String
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  sender      String
+  recipient   String
+  channel     String   // Email, WhatsApp, Slack, Meeting, Memo
+  subject     String
+  content     String
+  sentAt      DateTime @default(now())
+
+  @@map("communication_logs")
+}
+
+// 24. Change Requests
+model ChangeRequest {
+  id          String   @id @default(cuid())
+  crCode      String   @unique // e.g. CR-001
+  projectId   String
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  requesterId String
+  requester   User     @relation("CRRequester", fields: [requesterId], references: [id])
+  title       String
+  description String
+  reason      String
+  costImpact  Float    @default(0)
+  scheduleImpactDays Int @default(0)
+  qualityImpact String?
+  technicalAnalysis String?
+  status      String   @default("Pending") // Pending, Under Review, Approved, Rejected
+  decisionNotes String?
+  decidedAt   DateTime?
+  decidedBy   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("change_requests")
+}
+
+// 25. Budgets
+model Budget {
+  id              String   @id @default(cuid())
+  projectId       String   @unique
+  project         Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  totalLaborCost  Float    @default(722000000)
+  totalNonLaborCost Float  @default(61000000)
+  directCost      Float    @default(783000000)
+  contingencyRate Float    @default(0.10)
+  contingencyCost Float    @default(78300000)
+  subtotal        Float    @default(861300000)
+  taxRate         Float    @default(0.11)
+  taxAmount       Float    @default(94743000)
+  totalBudget     Float    @default(956043000)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  items           BudgetItem[]
+  expenses        Expense[]
+
+  @@map("budgets")
+}
+
+// 26. Budget Items (Termin & Allocations)
+model BudgetItem {
+  id          String   @id @default(cuid())
+  budgetId    String
+  budget      Budget   @relation(fields: [budgetId], references: [id], onDelete: Cascade)
+  category    String   // SDM, Non-SDM, Termin 1, Termin 2, etc.
+  name        String
+  allocatedAmount Float
+  percentage  Float?
+  notes       String?
+  isPaid      Boolean  @default(false)
+  paidAt      DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("budget_items")
+}
+
+// 27. Expenses (Actual Costs)
+model Expense {
+  id          String   @id @default(cuid())
+  budgetId    String
+  budget      Budget   @relation(fields: [budgetId], references: [id], onDelete: Cascade)
+  description String
+  category    String   // SDM, Infrastruktur, Lisensi, Operasional, Kontingensi
+  amount      Float
+  expenseDate DateTime
+  receiptUrl  String?
+  isApproved  Boolean  @default(true)
+  approvedBy  String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("expenses")
+}
+
+// 28. Methodology Criteria
+model MethodologyCriterion {
+  id          String   @id @default(cuid())
+  code        String   @unique // C1 - C15
+  name        String
+  question    String
+  description String?
+  weight      Float    @default(1.0)
+  options     String   // JSON string of [{label, waterfallScore, kanbanScore, hybridScore}]
+  orderIndex  Int      @default(0)
+  isCustom    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  answers     MethodologyAnswer[]
+
+  @@map("methodology_criteria")
+}
+
+// 29. Methodology Assessments
+model MethodologyAssessment {
+  id          String   @id @default(cuid())
+  projectId   String?
+  project     Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  assessorId  String
+  assessor    User     @relation(fields: [assessorId], references: [id])
+  projectName String
+  waterfallScore Float @default(0)
+  kanbanScore    Float @default(0)
+  hybridScore    Float @default(0)
+  recommendedMethodology String // Waterfall, Kanban, Hybrid
+  rationale      String?
+  createdAt      DateTime @default(now())
+
+  answers        MethodologyAnswer[]
+
+  @@map("methodology_assessments")
+}
+
+// 30. Methodology Answers
+model MethodologyAnswer {
+  id            String   @id @default(cuid())
+  assessmentId  String
+  assessment    MethodologyAssessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+  criterionId   String
+  criterion     MethodologyCriterion  @relation(fields: [criterionId], references: [id], onDelete: Cascade)
+  selectedOption String
+  chosenScore   Float    @default(0)
+
+  @@map("methodology_answers")
+}
+
+// 31. Audit Logs
+model AuditLog {
+  id          String   @id @default(cuid())
+  userId      String?
+  user        User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  projectId   String?
+  project     Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  action      String   // LOGIN, LOGOUT, CREATE_PROJECT, UPDATE_TASK, APPROVE_GATE, etc.
+  entityType  String   // Project, Task, Gate, Budget, User, Document, etc.
+  entityId    String?
+  details     String?  // JSON or text description of changes
+  ipAddress   String?
+  createdAt   DateTime @default(now())
+
+  @@map("audit_logs")
+}
+
